@@ -21,7 +21,7 @@ A stateful tool server that provides remote tool execution capabilities with per
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────┐  │
-│  │   HTTP/WS    │    │   Session    │    │   Execution          │  │
+│  │   HTTP       │    │   Session    │    │   Execution          │  │
 │  │   Server     │───▶│   Manager    │───▶│   Manager            │  │
 │  │   (Bun)      │    │              │    │                      │  │
 │  └──────────────┘    └──────────────┘    └──────────────────────┘  │
@@ -34,8 +34,10 @@ A stateful tool server that provides remote tool execution capabilities with per
 │         │                                                           │
 │         ▼                                                           │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                    WebSocket Streaming                        │  │
+│  │                 SSE (Server-Sent Events)                      │  │
 │  │  (Real-time stdout/stderr + execution status updates)         │  │
+│  │  - Unidirectional: server → client streaming                  │  │
+│  │  - Client commands via regular HTTP POST requests             │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -49,12 +51,21 @@ A stateful tool server that provides remote tool execution capabilities with per
 │  └──────────────┘    └──────────────┘    └──────────────────────┘  │
 │                                                                      │
 │  Features:                                                           │
-│  - Auto-reconnect with session resumption                           │
-│  - Streaming output display                                          │
+│  - Auto-reconnect with session resumption (SSE built-in)            │
+│  - Streaming output display via EventSource                          │
 │  - Large output pagination (limit/offset)                           │
 │  - LLM-ready result formatting                                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Why SSE over WebSocket?
+
+1. **Simpler** - Unidirectional streaming is all we need (server→client for output)
+2. **HTTP-native** - Works through proxies, CDNs, and firewalls without special config
+3. **Auto-reconnect** - Browser `EventSource` API has built-in reconnection with `Last-Event-ID`
+4. **Matches Letta pattern** - Consistent with how Letta API streams responses
+5. **Easier debugging** - Standard HTTP, viewable in browser dev tools
+6. **Less overhead** - No connection upgrade, no ping/pong frames
 
 ## Data Model
 
@@ -186,97 +197,126 @@ GET    /api/sessions/:id/processes      # List running processes
 DELETE /api/sessions/:id/processes/:pid # Kill process
 ```
 
-### WebSocket Protocol
+### SSE Streaming Protocol
 
-Connect to: `ws://server/api/sessions/:id/stream`
+#### Execute with Streaming (SSE)
 
-#### Client → Server Messages
+```
+POST /api/sessions/:id/execute/stream
+Content-Type: application/json
+Accept: text/event-stream
 
-```typescript
-// Execute tool
 {
-  type: 'execute',
-  requestId: string,
-  tool: string,
-  args: Record<string, unknown>
-}
-
-// Cancel execution
-{
-  type: 'cancel',
-  executionId: string
-}
-
-// Query output
-{
-  type: 'query_output',
-  executionId: string,
-  stream: 'stdout' | 'stderr',
-  offset: number,
-  limit: number
-}
-
-// Heartbeat
-{
-  type: 'ping'
+  "tool": "Bash",
+  "args": { "command": "npm install" },
+  "timeout": 60000
 }
 ```
 
-#### Server → Client Messages
+The response is an SSE stream (`text/event-stream`):
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+
+event: started
+id: 1
+data: {"executionId":"exec_abc123","tool":"Bash"}
+
+event: stdout
+id: 2
+data: {"executionId":"exec_abc123","data":"Installing dependencies...\n","offset":0}
+
+event: stdout
+id: 3
+data: {"executionId":"exec_abc123","data":"added 150 packages\n","offset":28}
+
+event: stderr
+id: 4
+data: {"executionId":"exec_abc123","data":"npm WARN deprecated...\n","offset":0}
+
+event: completed
+id: 5
+data: {"executionId":"exec_abc123","status":"completed","exitCode":0,"truncated":false,"totalStdoutSize":156,"totalStderrSize":45}
+
+```
+
+#### SSE Event Types
 
 ```typescript
 // Execution started
-{
-  type: 'execution_started',
-  requestId: string,
-  executionId: string,
-  tool: string
+event: started
+data: {
+  executionId: string;
+  tool: string;
 }
 
-// Output chunk (streamed)
-{
-  type: 'output',
-  executionId: string,
-  stream: 'stdout' | 'stderr',
-  data: string,
-  offset: number                       // Byte offset in full output
+// Output chunk (streamed in real-time)
+event: stdout | stderr
+data: {
+  executionId: string;
+  data: string;                        // Output chunk
+  offset: number;                      // Byte offset in full output
 }
 
 // Execution completed
-{
-  type: 'execution_completed',
-  executionId: string,
-  status: 'completed' | 'failed' | 'cancelled',
-  exitCode?: number,
-  result?: unknown,
-  error?: string,
-  truncated: boolean,
-  totalStdoutSize: number,
-  totalStderrSize: number
+event: completed
+data: {
+  executionId: string;
+  status: 'completed' | 'failed' | 'cancelled';
+  exitCode?: number;
+  result?: unknown;
+  error?: string;
+  truncated: boolean;
+  totalStdoutSize: number;
+  totalStderrSize: number;
 }
 
-// Query response
-{
-  type: 'output_response',
-  executionId: string,
-  stream: 'stdout' | 'stderr',
-  data: string,
-  offset: number,
-  hasMore: boolean
+// Error during execution
+event: error
+data: {
+  executionId?: string;
+  code: string;
+  message: string;
 }
 
-// Error
+// Heartbeat (keep connection alive)
+event: ping
+data: {}
+```
+
+#### Reconnection with Last-Event-ID
+
+SSE supports automatic reconnection. If the connection drops, the client can reconnect with the `Last-Event-ID` header:
+
+```
+GET /api/sessions/:id/executions/:execId/stream
+Last-Event-ID: 3
+
+# Server resumes from event 4 onwards
+```
+
+#### Non-Streaming Execution (Simple HTTP)
+
+For tools that complete quickly or when streaming isn't needed:
+
+```
+POST /api/sessions/:id/execute
+Content-Type: application/json
+
 {
-  type: 'error',
-  requestId?: string,
-  executionId?: string,
-  code: string,
-  message: string
+  "tool": "Read",
+  "args": { "file_path": "/app/package.json" }
 }
 
-// Heartbeat response
+# Response (waits for completion)
 {
-  type: 'pong'
+  "executionId": "exec_xyz789",
+  "status": "completed",
+  "result": { "content": "..." },
+  "timing": { "durationMs": 15 }
 }
 ```
 
@@ -413,18 +453,26 @@ const llmResult = execution.formatForLLM({
 
 ### Reconnection Handling
 
+SSE has built-in reconnection support via the `EventSource` API. The client leverages this:
+
 ```typescript
 const client = new ToolServerClient({
   baseUrl: 'http://localhost:3000',
   sessionId: savedSessionId,
-  reconnect: {
-    enabled: true,
-    maxAttempts: 5,
-    backoffMs: [1000, 2000, 4000, 8000, 16000]
-  }
 });
 
-// Client automatically reconnects and resumes session
+// Execute with automatic reconnection
+const execution = await client.execute('Bash', {
+  command: 'npm install',
+});
+
+// If connection drops during streaming, SSE automatically reconnects
+// using Last-Event-ID header to resume from where it left off
+for await (const chunk of execution.stream()) {
+  process.stdout.write(chunk.data);
+}
+
+// Events for monitoring connection state
 client.on('reconnected', (session) => {
   console.log('Reconnected to session:', session.id);
 });
@@ -432,6 +480,23 @@ client.on('reconnected', (session) => {
 client.on('disconnected', (reason) => {
   console.log('Disconnected:', reason);
 });
+```
+
+### Cancel Execution
+
+Cancellation is done via a separate HTTP request (SSE is unidirectional):
+
+```typescript
+// Start long-running command
+const execution = await client.execute('Bash', {
+  command: 'npm run build:watch',
+  runInBackground: true
+});
+
+// Cancel it later via HTTP POST
+await client.cancel(execution.id);
+// or
+await execution.cancel();
 ```
 
 ## Configuration
@@ -521,16 +586,16 @@ TOOL_SERVER_OUTPUT_TRUNCATE=30000
    - Request validation
    - Error handling
 
-7. **WebSocket Server**
-   - Real-time output streaming
-   - Execution control messages
-   - Heartbeat/keepalive
+7. **SSE Streaming**
+   - Real-time output streaming via `text/event-stream`
+   - Event ID tracking for reconnection support
+   - Heartbeat/keepalive (ping events)
 
 ### Phase 4: Client SDK
 
 8. **Base Client**
    - HTTP client for REST endpoints
-   - WebSocket client for streaming
+   - SSE client for streaming (fetch + ReadableStream or EventSource)
    - Session management
 
 9. **Streaming Interface**
@@ -568,9 +633,9 @@ src/tool-server/
 │   │   ├── sessions.ts                # Session endpoints
 │   │   ├── executions.ts              # Execution endpoints
 │   │   └── processes.ts               # Process endpoints
-│   └── websocket/
-│       ├── handler.ts                 # WebSocket handler
-│       └── protocol.ts                # Message types
+│   └── sse/
+│       ├── stream.ts                  # SSE stream helper
+│       └── events.ts                  # Event type definitions
 ├── core/
 │   ├── session-manager.ts             # Session lifecycle
 │   ├── execution-manager.ts           # Execution tracking
@@ -588,11 +653,11 @@ src/tool-server/
 │   ├── client.ts                      # ToolServerClient class
 │   ├── session.ts                     # Session management
 │   ├── execution.ts                   # Execution handle
-│   └── streaming.ts                   # Output streaming
+│   └── sse-stream.ts                  # SSE client streaming
 └── types/
     ├── session.ts                     # Session types
     ├── execution.ts                   # Execution types
-    ├── protocol.ts                    # Protocol types
+    ├── protocol.ts                    # SSE event types
     └── tools.ts                       # Tool types
 ```
 
