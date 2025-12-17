@@ -612,20 +612,34 @@ TOOL_SERVER_OUTPUT_TRUNCATE=30000
 
 **Tests:** 68 passing tests (12 new server tests)
 
-### Phase 4: Client SDK
+### Phase 4: Client SDK ✅ COMPLETED
 
-8. **Base Client**
-   - HTTP client for REST endpoints
-   - SSE client for streaming (fetch + ReadableStream or EventSource)
-   - Session management
+9. **ToolServerClient** ✅
+   - createClient factory function
+   - Session management: connect, close, extend, getSession
+   - Tool execution: execute (sync/stream), cancel
+   - Output querying: queryOutput, getExecution, listExecutions
+   - Utility methods: listTools, health
 
-9. **Streaming Interface**
-   - AsyncIterator for output streaming
-   - Buffering and backpressure handling
+10. **SSE Stream Client** ✅
+    - parseSSEStream async generator
+    - OutputAccumulator for collecting streamed output
+    - StreamChunk types for typed event handling
 
-10. **LLM Integration**
-    - Output formatting for LLM consumption
-    - Truncation and pagination helpers
+11. **ExecutionHandle** ✅
+    - stream() AsyncGenerator for real-time output
+    - result() for getting final execution result
+    - cancel() for stopping execution
+    - queryOutput() for paginated output retrieval
+    - formatForLLM() for LLM-ready output formatting
+
+12. **LLM Integration** ✅
+    - Configurable max output length
+    - Optional metadata (tool name, exit code, duration)
+    - Truncation with "use queryOutput" hints
+    - Error formatting
+
+**Tests:** 89 passing tests (21 new client tests)
 
 ### Phase 5: Polish & Testing
 
