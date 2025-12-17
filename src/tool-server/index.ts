@@ -68,3 +68,60 @@ export type {
   StreamChunk,
   ClientSession,
 } from "./client/types";
+
+// Tunnel exports
+export {
+  // Client
+  TunnelClient,
+  createTunnelClient,
+  // Server
+  TunnelServer,
+  createTunnelServer,
+  // Authentication
+  generateToken,
+  validateToken,
+  createTokenValidator,
+  createCustomTokenValidator,
+  generateSecret,
+  generateClientId,
+  // Helpers
+  createMessageId,
+  createCallId,
+  toolDefinitionToSchema,
+} from "./tunnel";
+
+// Tunnel types
+export type {
+  // Configuration
+  TunnelClientConfig,
+  TunnelServerConfig,
+  ToolCallResult,
+  ToolCallOptions,
+  // Authentication
+  TokenPayload,
+  TokenValidationResult,
+  // Messages
+  TunnelMessageType,
+  TunnelMessage,
+  AuthRequest,
+  AuthResponse,
+  ToolCallRequest,
+  ToolCallResponse,
+  StreamOutput,
+  ListToolsRequest,
+  ListToolsResponse,
+  CancelRequest,
+  CancelResponse,
+  PingMessage,
+  PongMessage,
+  ErrorMessage,
+  // Info
+  ClientInfo,
+  ServerInfo,
+  ClientCapabilities,
+  ToolSchema,
+  TunnelErrorCode,
+  // Events
+  TunnelClientEvent,
+  TunnelServerEvent,
+} from "./tunnel";
