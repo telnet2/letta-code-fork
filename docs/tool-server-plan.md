@@ -569,17 +569,28 @@ TOOL_SERVER_OUTPUT_TRUNCATE=30000
 
 **Tests:** 43 passing tests in `src/tool-server/tests/`
 
-### Phase 2: Tool Integration
+### Phase 2: Tool Integration ✅ COMPLETED
 
-4. **Tool Registry**
+4. **Tool Registry** ✅
    - Adapt existing tool implementations
    - Session-aware tool execution
    - CWD and environment propagation
 
-5. **Process Manager**
-   - Background process tracking
-   - Process lifecycle management
-   - Output streaming for long-running processes
+5. **Tool Adapters** ✅
+   - Bash: Shell command execution with streaming
+   - Read: File reading with pagination
+   - Write: File creation with directory support
+   - Edit: String replacement in files
+   - Glob: File pattern matching
+   - Grep: Content search with regex
+
+6. **Tool Executor** ✅
+   - Session-aware execution wrapper
+   - Timeout handling with AbortController
+   - Output streaming via callbacks
+   - Cancellation support
+
+**Tests:** 56 passing tests (13 new tool tests)
 
 ### Phase 3: Server Implementation
 
