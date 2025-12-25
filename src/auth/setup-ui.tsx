@@ -55,21 +55,24 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       setUserCode(deviceData.user_code);
       setVerificationUri(deviceData.verification_uri_complete);
 
-      // Auto-open browser
-      try {
-        const { default: open } = await import("open");
-        await open(deviceData.verification_uri_complete);
-      } catch (openErr) {
-        // If auto-open fails, user can still manually visit the URL
-        console.error("Failed to auto-open browser:", openErr);
-      }
+      // Auto-open browser (fire-and-forget, never crash)
+      // Uses promise chaining to ensure error handler is attached immediately
+      // after promise resolution, preventing race conditions with error events
+      import("open")
+        .then(({ default: open }) =>
+          open(deviceData.verification_uri_complete, { wait: false }),
+        )
+        .then((subprocess) => {
+          subprocess.on("error", () => {
+            // Silently ignore - user can manually visit the URL shown above
+          });
+        })
+        .catch(() => {
+          // Silently ignore any failures (WSL PowerShell issues, missing xdg-open, etc.)
+        });
 
       // Get or generate device ID
-      let deviceId = settingsManager.getSetting("deviceId");
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        settingsManager.updateSettings({ deviceId });
-      }
+      const deviceId = settingsManager.getOrCreateDeviceId();
       const deviceName = hostname();
 
       // Start polling in background
@@ -136,7 +139,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
             {userCode}
           </Text>
         </Text>
-        <Text dimColor>URL: {verificationUri}</Text>
+        <Text dimColor>If browser didn't open, visit: {verificationUri}</Text>
         <Text> </Text>
         <Text dimColor>Waiting for you to authorize in the browser...</Text>
       </Box>

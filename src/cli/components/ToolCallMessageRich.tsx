@@ -1,9 +1,11 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
+  isMemoryTool,
   isPlanTool,
   isTaskTool,
   isTodoTool,
@@ -12,6 +14,7 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import { TodoRenderer } from "./TodoRenderer.js";
 
@@ -44,8 +47,14 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const argsText = line.argsText ?? "...";
 
   // Task tool - handled by SubagentGroupDisplay, don't render here
+  // Exception: Cancelled/rejected Task tools should be rendered inline
+  // since they won't appear in SubagentGroupDisplay
   if (isTaskTool(rawName)) {
-    return null;
+    const isCancelledOrRejected =
+      line.phase === "finished" && line.resultOk === false;
+    if (!isCancelledOrRejected) {
+      return null;
+    }
   }
 
   // Apply tool name remapping
@@ -101,14 +110,14 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       );
     }
 
-    if (line.resultText === "Interrupted by user") {
+    if (line.resultText === INTERRUPTED_BY_USER) {
       return (
         <Box flexDirection="row">
           <Box width={prefixWidth} flexShrink={0}>
             <Text>{prefix}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
-            <Text color={colors.status.interrupt}>Interrupted by user</Text>
+            <Text color={colors.status.interrupt}>{INTERRUPTED_BY_USER}</Text>
           </Box>
         </Box>
       );
@@ -135,6 +144,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
           // Convert todos to safe format for TodoRenderer
+          // Note: Anthropic/Codex use "content", Gemini uses "description"
           const safeTodos = parsedArgs.todos.map((t: unknown, i: number) => {
             const rec = isRecord(t) ? t : {};
             const status: "pending" | "in_progress" | "completed" =
@@ -144,8 +154,13 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
                   ? "in_progress"
                   : "pending";
             const id = typeof rec.id === "string" ? rec.id : String(i);
+            // Handle both "content" (Anthropic/Codex) and "description" (Gemini) fields
             const content =
-              typeof rec.content === "string" ? rec.content : JSON.stringify(t);
+              typeof rec.content === "string"
+                ? rec.content
+                : typeof rec.description === "string"
+                  ? rec.description
+                  : JSON.stringify(t);
             const priority: "high" | "medium" | "low" | undefined =
               rec.priority === "high"
                 ? "high"
@@ -201,6 +216,17 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       }
     }
 
+    // Check if this is a memory tool - show diff instead of raw result
+    if (isMemoryTool(rawName) && line.resultOk !== false && line.argsText) {
+      const memoryDiff = (
+        <MemoryDiffRenderer argsText={line.argsText} toolName={rawName} />
+      );
+      if (memoryDiff) {
+        return memoryDiff;
+      }
+      // If MemoryDiffRenderer returns null, fall through to regular handling
+    }
+
     // Regular result handling
     const isError = line.resultOk === false;
 
@@ -249,10 +275,25 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
         </Box>
         <Box flexGrow={1} width={rightWidth}>
           {fallback ? (
-            <Text wrap="wrap">{`${displayName}${args}`}</Text>
+            <Text wrap="wrap">
+              {isMemoryTool(rawName) ? (
+                <>
+                  <Text color={colors.tool.memoryName}>{displayName}</Text>
+                  {args}
+                </>
+              ) : (
+                `${displayName}${args}`
+              )}
+            </Text>
           ) : (
             <Box flexDirection="row">
-              <Text>{displayName}</Text>
+              <Text
+                color={
+                  isMemoryTool(rawName) ? colors.tool.memoryName : undefined
+                }
+              >
+                {displayName}
+              </Text>
               {args ? (
                 <Box
                   flexGrow={1}

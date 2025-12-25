@@ -20,7 +20,30 @@ import type {
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep"];
+const WORKING_DIRECTORY_TOOLS = [
+  // Default/Anthropic toolset
+  "Read",
+  "Glob",
+  "Grep",
+  // Codex toolset
+  "read_file",
+  "ReadFile",
+  "list_dir",
+  "ListDir",
+  "grep_files",
+  "GrepFiles",
+  // Gemini toolset
+  "read_file_gemini",
+  "ReadFileGemini",
+  "glob_gemini",
+  "GlobGemini",
+  "list_directory",
+  "ListDirectory",
+  "search_file_content",
+  "SearchFileContent",
+  "read_many_files",
+  "ReadManyFiles",
+];
 const READ_ONLY_SHELL_TOOLS = new Set([
   "Bash",
   "shell",
@@ -93,10 +116,20 @@ export function checkPermission(
   const modeOverride = permissionMode.checkModeOverride(toolName, toolArgs);
   if (modeOverride) {
     const currentMode = permissionMode.getMode();
+    // Include plan file path and guidance in denial message for plan mode
+    let reason = `Permission mode: ${currentMode}`;
+    if (currentMode === "plan" && modeOverride === "deny") {
+      const planFilePath = permissionMode.getPlanFilePath();
+      // planFilePath should always be set when in plan mode - they're set together
+      reason =
+        `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
+        `Write your plan to: ${planFilePath || "(error: plan file path not configured)"}. ` +
+        `Use ExitPlanMode when your plan is ready for user approval.`;
+    }
     return {
       decision: modeOverride,
       matchedRule: `${currentMode} mode`,
-      reason: `Permission mode: ${currentMode}`,
+      reason,
     };
   }
 
@@ -244,13 +277,32 @@ function isWithinAllowedDirectories(
  */
 function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   switch (toolName) {
+    // File tools: "ToolName(path/to/file)"
     case "Read":
-    case "read_file":
     case "Write":
     case "Edit":
     case "Glob":
-    case "Grep": {
-      // File tools: "ToolName(path/to/file)"
+    case "Grep":
+    // Codex file tools
+    case "read_file":
+    case "ReadFile":
+    case "list_dir":
+    case "ListDir":
+    case "grep_files":
+    case "GrepFiles":
+    // Gemini file tools
+    case "read_file_gemini":
+    case "ReadFileGemini":
+    case "write_file_gemini":
+    case "WriteFileGemini":
+    case "glob_gemini":
+    case "GlobGemini":
+    case "list_directory":
+    case "ListDirectory":
+    case "search_file_content":
+    case "SearchFileContent":
+    case "read_many_files":
+    case "ReadManyFiles": {
       const filePath = extractFilePath(toolArgs);
       return filePath ? `${toolName}(${filePath})` : toolName;
     }
@@ -287,6 +339,38 @@ function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
 }
 
 /**
+ * File tools that use glob matching for permissions
+ */
+const FILE_TOOLS = [
+  // Default/Anthropic toolset
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  // Codex toolset
+  "read_file",
+  "ReadFile",
+  "list_dir",
+  "ListDir",
+  "grep_files",
+  "GrepFiles",
+  // Gemini toolset
+  "read_file_gemini",
+  "ReadFileGemini",
+  "write_file_gemini",
+  "WriteFileGemini",
+  "glob_gemini",
+  "GlobGemini",
+  "list_directory",
+  "ListDirectory",
+  "search_file_content",
+  "SearchFileContent",
+  "read_many_files",
+  "ReadManyFiles",
+];
+
+/**
  * Check if query matches a permission pattern
  */
 function matchesPattern(
@@ -296,17 +380,7 @@ function matchesPattern(
   workingDirectory: string,
 ): boolean {
   // File tools use glob matching
-  if (
-    [
-      "Read",
-      "read_file",
-      "Write",
-      "Edit",
-      "Glob",
-      "Grep",
-      "grep_files",
-    ].includes(toolName)
-  ) {
+  if (FILE_TOOLS.includes(toolName)) {
     return matchesFilePattern(query, pattern, workingDirectory);
   }
 
@@ -350,12 +424,16 @@ function getDefaultDecision(toolName: string): PermissionDecision {
     "GrepFiles",
     "UpdatePlan",
     // Gemini toolset (snake_case) - tools that don't require approval
+    "read_file_gemini",
     "list_directory",
+    "glob_gemini",
     "search_file_content",
     "write_todos",
     "read_many_files",
     // Gemini toolset (PascalCase) - tools that don't require approval
+    "ReadFileGemini",
     "ListDirectory",
+    "GlobGemini",
     "SearchFileContent",
     "WriteTodos",
     "ReadManyFiles",
